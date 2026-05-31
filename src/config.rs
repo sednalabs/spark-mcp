@@ -591,7 +591,7 @@ fn env_f32(name: &str, fallback: f32) -> Result<f32, String> {
     }
     trimmed
         .parse::<f32>()
-        .map_err(|_| format!("Invalid {name}={raw} (expected float)."))
+        .map_err(|_| format!("Invalid {}={} (expected float).", name, raw))
 }
 
 fn env_f64(name: &str, fallback: f64) -> Result<f64, String> {
@@ -602,12 +602,12 @@ fn env_f64(name: &str, fallback: f64) -> Result<f64, String> {
     }
     trimmed
         .parse::<f64>()
-        .map_err(|_| format!("Invalid {name}={raw} (expected float)."))
+        .map_err(|_| format!("Invalid {}={} (expected float).", name, raw))
 }
 
 fn validate_url(name: &str, value: Option<&str>) -> Result<(), String> {
     if let Some(value) = value {
-        Url::parse(value).map_err(|err| format!("invalid URL for {name}: {err}"))?;
+        Url::parse(value).map_err(|err| format!("invalid URL for {}: {}", name, err))?;
     }
     Ok(())
 }
