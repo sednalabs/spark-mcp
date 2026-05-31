@@ -607,9 +607,17 @@ fn env_f64(name: &str, fallback: f64) -> Result<f64, String> {
 
 fn validate_url(name: &str, value: Option<&str>) -> Result<(), String> {
     if let Some(value) = value {
-        Url::parse(value).map_err(|err| format!("invalid URL for {}: {}", name, err))?;
+        Url::parse(value).map_err(|err| invalid_url_message(name, err))?;
     }
     Ok(())
+}
+
+fn invalid_url_message(name: &str, err: impl std::fmt::Display) -> String {
+    let mut message = String::from("invalid URL for ");
+    message.push_str(name);
+    message.push_str(": ");
+    message.push_str(&err.to_string());
+    message
 }
 
 fn parse_auth_mode(raw: &str) -> Result<AuthMode, String> {
