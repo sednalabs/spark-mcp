@@ -1,0 +1,6 @@
+/.tmp/
+/.fastembed_cache/
+/data/index/
+/data/semantic/
+/data/event-store.sqlite*
+/target/

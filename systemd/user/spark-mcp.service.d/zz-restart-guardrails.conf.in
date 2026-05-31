@@ -1,0 +1,8 @@
+[Unit]
+StartLimitIntervalSec=30min
+StartLimitBurst=4
+
+[Service]
+Restart=on-failure
+RestartSec=15s
+RestartPreventExitStatus=127 203

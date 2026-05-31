@@ -1,0 +1,392 @@
+{
+  "schema": "mcp_tool_schema_snapshot",
+  "tools": [
+    {
+      "description": "Fetch a corpus chunk by doc_id + chunk_index.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments for `spark.get_chunk`.",
+        "properties": {
+          "chunk_index": {
+            "description": "The zero-based chunk index.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "doc_id": {
+            "description": "The document identifier (relative path or mount-prefixed path).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id",
+          "chunk_index"
+        ],
+        "title": "GetChunkArgs",
+        "type": "object"
+      },
+      "name": "spark.get_chunk"
+    },
+    {
+      "description": "Fetch a corpus document by doc_id.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments for `spark.get_doc`.",
+        "properties": {
+          "doc_id": {
+            "description": "The document identifier (relative path or mount-prefixed path).",
+            "type": "string"
+          },
+          "max_chars": {
+            "default": null,
+            "description": "Maximum number of characters to return (to avoid context window bloat).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "doc_id"
+        ],
+        "title": "GetDocArgs",
+        "type": "object"
+      },
+      "name": "spark.get_doc"
+    },
+    {
+      "description": "Resolve lexical hover at file:line:column (symbol + snippet + context).",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments for `spark.hover`.",
+        "properties": {
+          "column": {
+            "description": "1-based column number.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "context_lines": {
+            "default": null,
+            "description": "Override context lines (default 3, max 20).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "file": {
+            "description": "File path or doc_id to inspect.",
+            "type": "string"
+          },
+          "include_context": {
+            "default": null,
+            "description": "Include line context around the resolved position.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "line": {
+            "description": "1-based line number.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "symbol": {
+            "default": null,
+            "description": "Optional symbol override.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "file",
+          "line",
+          "column"
+        ],
+        "title": "HoverArgs",
+        "type": "object"
+      },
+      "name": "spark.hover"
+    },
+    {
+      "description": "Report index metadata and corpus counts.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments for `spark.index_status`.",
+        "title": "IndexStatusArgs",
+        "type": "object"
+      },
+      "name": "spark.index_status"
+    },
+    {
+      "description": "List corpus sources and file counts.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "ListSourcesArgs",
+        "type": "object"
+      },
+      "name": "spark.list_sources"
+    },
+    {
+      "description": "LLM adapter endpoint for grounded answers (provider-agnostic; returns not configured until a provider runtime is enabled).",
+      "inputSchema": {
+        "$defs": {
+          "LlmProviderArg": {
+            "description": "Arguments for `spark.llm_answer`.",
+            "enum": [
+              "gemini"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments for `spark.llm_answer`.",
+        "properties": {
+          "provider": {
+            "$ref": "#/$defs/LlmProviderArg",
+            "description": "LLM provider selector (currently only `gemini`)."
+          },
+          "question": {
+            "description": "The user's question to be answered.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "LlmAnswerArgs",
+        "type": "object"
+      },
+      "name": "spark.llm_answer"
+    },
+    {
+      "description": "Search local SPARK corpus with citations (mode: auto|lexical|semantic|hybrid).",
+      "inputSchema": {
+        "$defs": {
+          "SearchModeArg": {
+            "enum": [
+              "auto",
+              "lexical",
+              "semantic",
+              "hybrid"
+            ],
+            "type": "string"
+          },
+          "SearchQueryKindArg": {
+            "enum": [
+              "literal",
+              "tantivy"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments for `spark.search`.",
+        "properties": {
+          "context_lines": {
+            "default": null,
+            "description": "Override the number of context lines (default 3, max 20).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "include_context": {
+            "default": false,
+            "description": "Include line context for each result.",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": null,
+            "description": "Maximum number of results to return.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mode": {
+            "$ref": "#/$defs/SearchModeArg",
+            "description": "The search mode to use (auto, lexical, semantic, hybrid)."
+          },
+          "query": {
+            "description": "The search query string.",
+            "type": "string"
+          },
+          "query_kind": {
+            "$ref": "#/$defs/SearchQueryKindArg",
+            "description": "How to interpret the query for lexical search.\n\n- `tantivy` (default): interprets `query` using Tantivy query syntax.\n- `literal`: treats `query` as plain text (safe for signatures/code fragments)."
+          },
+          "source": {
+            "default": null,
+            "description": "Optional source filter (e.g. \"manual\", \"spec\").",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sources": {
+            "default": null,
+            "description": "Optional list of source filters (overrides `source`).",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "SearchArgs",
+        "type": "object"
+      },
+      "name": "spark.search"
+    },
+    {
+      "description": "Locate symbol definitions (definition or reference).",
+      "inputSchema": {
+        "$defs": {
+          "LocateKindArg": {
+            "enum": [
+              "definition",
+              "reference",
+              "both"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments for `spark_locate`.",
+        "properties": {
+          "context_lines": {
+            "default": null,
+            "description": "Override the number of context lines (default 3, max 20).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "include_context": {
+            "default": false,
+            "description": "Include line context around matches.",
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/$defs/LocateKindArg",
+            "description": "Optional kind filter (definition|reference|both)."
+          },
+          "limit": {
+            "default": null,
+            "description": "Maximum number of results to return.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "source": {
+            "default": null,
+            "description": "Optional source filter (e.g. \"manual\", \"spec\", \"local\", \"local-spark\").",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "symbol": {
+            "description": "The symbol to locate.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "title": "LocateArgs",
+        "type": "object"
+      },
+      "name": "spark_locate"
+    },
+    {
+      "description": "Find symbol references (usage sites).",
+      "inputSchema": {
+        "$defs": {
+          "RefsKindArg": {
+            "enum": [
+              "definition",
+              "reference",
+              "both"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments for `spark_refs`.",
+        "properties": {
+          "context_lines": {
+            "default": null,
+            "description": "Override the number of context lines (default 3, max 20).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "include_context": {
+            "default": false,
+            "description": "Include line context around matches.",
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/$defs/RefsKindArg",
+            "description": "Optional kind filter (definition|reference|both)."
+          },
+          "limit": {
+            "default": null,
+            "description": "Maximum number of results to return.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "source": {
+            "default": null,
+            "description": "Optional source filter (e.g. \"manual\", \"spec\", \"local\", \"local-spark\").",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "symbol": {
+            "description": "The symbol to locate references for.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "title": "RefsArgs",
+        "type": "object"
+      },
+      "name": "spark_refs"
+    }
+  ],
+  "version": 1
+}
