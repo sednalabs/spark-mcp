@@ -23,7 +23,7 @@ thiserror = "2.0.18"
 time = { version = "0.3.37", features = ["formatting", "parsing"] }
 ignore = "0.4.22"
 html2text = "0.12.5"
-tantivy = "0.22.0"
+tantivy = "0.26.1"
 schemars = "1.2.0"
 bincode = "1.3.3"
 fastembed = { version = "5", default-features = false, features = ["ort-load-dynamic", "hf-hub-native-tls"] }
