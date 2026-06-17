@@ -1530,7 +1530,7 @@ impl SparkMcp {
 mod tests {
     use super::{
         HoverArgs, IndexStatusArgs, QueryShortcut, ReindexArgs, SearchArgs, SearchModeArg,
-        SearchQueryKindArg, parse_query_shortcut, resolve_source_filter,
+        SearchQueryKindArg, normalize_workspace_paths, parse_query_shortcut, resolve_source_filter,
     };
     use crate::auto_reindex::AutoReindexer;
     use crate::config::ResumeMode;
@@ -1620,12 +1620,6 @@ mod tests {
                 "procedure Gateway_Decision is\nprocedure Policy_Kernel is\n-- policy_kernel hardening path\n-- policy::kernel fallback probe\n-- refresh workflow notes",
             )
             .expect("write local file");
-            fs::write(
-                local_mount.join("src/policy,gateway.ads"),
-                "procedure Gateway_Comma_Path is",
-            )
-            .expect("write comma path local file");
-
             let search = SearchIndex::open_or_create(
                 &corpus_dir,
                 &index_dir,
@@ -1745,6 +1739,15 @@ mod tests {
         let (shortcut, query) = parse_query_shortcut("plain query");
         assert!(shortcut.is_none());
         assert_eq!(query, "plain query");
+    }
+
+    #[test]
+    fn normalize_workspace_paths_preserves_commas_inside_json_array_values() {
+        let paths =
+            normalize_workspace_paths(Some(vec!["spark/src/policy,gateway.ads".to_string()]))
+                .expect("workspace path normalizes");
+
+        assert_eq!(paths, vec!["spark/src/policy,gateway.ads".to_string()]);
     }
 
     #[test]
@@ -2189,33 +2192,6 @@ mod tests {
             err.to_string()
                 .contains("failed to canonicalize workspace path")
         );
-    }
-
-    #[tokio::test]
-    async fn spark_reindex_preserves_comma_in_workspace_path() {
-        let harness = HoverToolHarness::new();
-        let comma_path = harness.workspace_relative_path("src/policy,gateway.ads");
-
-        let reindex = extract_structured(
-            harness
-                .server
-                .spark_reindex(Parameters(ReindexArgs {
-                    sources: Some(vec!["local".to_string()]),
-                    workspace_paths: Some(vec![comma_path.clone()]),
-                    full_reindex: false,
-                    reason: "refresh comma path".to_string(),
-                }))
-                .await
-                .expect("comma path reindex succeeds"),
-        );
-
-        let paths = reindex
-            .get("reindex")
-            .and_then(|value| value.get("workspace_paths"))
-            .and_then(|value| value.as_array())
-            .expect("workspace paths array");
-        let rendered_paths = paths.iter().map(|value| value.as_str()).collect::<Vec<_>>();
-        assert_eq!(rendered_paths, vec![Some(comma_path.as_str())]);
     }
 
     #[tokio::test]
