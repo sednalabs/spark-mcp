@@ -55,6 +55,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use spark_mcp::admission::{AdmissionEvaluation, AdmissionOutcome, evaluate_startup_admission};
+use spark_mcp::auto_reindex::AutoReindexer;
 use spark_mcp::config::{
     EventStoreMode, ResumeMode, StartupAdmissionMode, StreamableHttpConfig, load_config,
 };
@@ -643,6 +644,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect(),
     )?;
     let search = Arc::new(search);
+    let reindexer = AutoReindexer::new(search.clone(), std::time::Duration::from_millis(3000));
 
     let token = CancellationToken::new();
     let mut session_config = SessionConfig::default();
@@ -661,6 +663,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     let service_search = search.clone();
+    let service_reindexer = reindexer.clone();
     let resume_mode = config.streamable_http.resume_mode;
     let service_sessions = session_manager.clone();
     let mut stateful_server_config = StreamableHttpServerConfig::default();
@@ -670,6 +673,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         move || {
             Ok(SparkMcp::new(
                 service_search.clone(),
+                service_reindexer.clone(),
                 service_sessions.clone(),
                 resume_mode,
             ))
@@ -679,6 +683,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let stateless_service = if config.streamable_http.stateless_fallback {
         let stateless_search = search.clone();
+        let stateless_reindexer = reindexer.clone();
         let stateless_sessions = session_manager.clone();
         let mut stateless_server_config = StreamableHttpServerConfig::default();
         stateless_server_config.sse_retry = None;
@@ -688,6 +693,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             move || {
                 Ok(SparkMcp::new(
                     stateless_search.clone(),
+                    stateless_reindexer.clone(),
                     stateless_sessions.clone(),
                     resume_mode,
                 ))

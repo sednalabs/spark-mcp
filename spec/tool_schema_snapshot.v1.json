@@ -167,6 +167,52 @@
       "name": "spark.llm_answer"
     },
     {
+      "description": "Trigger an audited lexical reindex (local-only by default, single-flight).",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Arguments for `spark.reindex`.",
+        "properties": {
+          "full_reindex": {
+            "default": false,
+            "description": "Allow broad source selection (requires `SPARK_MCP_REINDEX_ALLOW_FULL=1`).",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Required audit reason for running reindex.",
+            "type": "string"
+          },
+          "sources": {
+            "default": null,
+            "description": "Optional source labels. Defaults to local-only when `full_reindex` is false.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "workspace_paths": {
+            "default": null,
+            "description": "Optional workspace-relative paths used for audit/scoped validation.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ReindexArgs",
+        "type": "object"
+      },
+      "name": "spark.reindex"
+    },
+    {
       "description": "Search local SPARK corpus with citations (mode: auto|lexical|semantic|hybrid).",
       "inputSchema": {
         "$defs": {

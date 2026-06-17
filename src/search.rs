@@ -17,8 +17,8 @@ use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::UNIX_EPOCH;
+use std::sync::{Mutex, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use hnsw_rs::anndists::dist::distances::DistDot;
@@ -63,6 +63,12 @@ pub enum SearchError {
     SemanticConfig(String),
     #[error("invalid doc id: {0}")]
     InvalidDocId(String),
+    #[error("invalid reindex request: {0}")]
+    ReindexScope(String),
+    #[error("reindex already in progress")]
+    ReindexBusy,
+    #[error("internal reindex state error: {0}")]
+    ReindexState(String),
 }
 
 /// Global search and indexing configuration.
@@ -225,6 +231,18 @@ pub struct LocalFreshnessReport {
     pub sources: Vec<SourceFreshness>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ReindexReport {
+    pub requested_sources: Vec<String>,
+    pub effective_sources: Vec<String>,
+    pub workspace_paths: Vec<String>,
+    pub reason: String,
+    pub indexed_at_unix_ms: Option<u64>,
+    pub scan_at_unix_ms: Option<u64>,
+    pub scan_file_count: usize,
+    pub scan_total_bytes: u64,
+}
+
 /// Full content of a document from the corpus.
 #[derive(Debug, Clone, Serialize)]
 pub struct DocumentContent {
@@ -353,8 +371,8 @@ struct SemanticMatch {
 /// Thread-safe index providing hybrid search over the document corpus.
 pub struct SearchIndex {
     corpus_mounts: Vec<CorpusMount>,
-    sources: Vec<SourceSummary>,
-    index_metadata: IndexMetadata,
+    sources: RwLock<Vec<SourceSummary>>,
+    index_metadata: RwLock<IndexMetadata>,
     index_dir: PathBuf,
     _index: Index,
     reader: IndexReader,
@@ -362,6 +380,7 @@ pub struct SearchIndex {
     query_parser: QueryParser,
     semantic: Option<SemanticIndex>,
     config: SearchConfig,
+    reindex_lock: Mutex<()>,
 }
 
 #[derive(Debug, Clone)]

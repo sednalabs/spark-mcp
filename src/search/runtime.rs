@@ -46,8 +46,8 @@ impl SearchIndex {
 
         Ok(Self {
             corpus_mounts,
-            sources,
-            index_metadata,
+            sources: RwLock::new(sources),
+            index_metadata: RwLock::new(index_metadata),
             index_dir: index_dir.to_path_buf(),
             _index: index,
             reader,
@@ -55,6 +55,7 @@ impl SearchIndex {
             query_parser,
             semantic,
             config,
+            reindex_lock: Mutex::new(()),
         })
     }
 
@@ -160,12 +161,19 @@ impl SearchIndex {
     }
 
     /// Return a summary of all indexed corpus sources.
-    pub fn list_sources(&self) -> &[SourceSummary] {
-        &self.sources
+    pub fn list_sources(&self) -> Vec<SourceSummary> {
+        self.sources
+            .read()
+            .expect("search sources lock poisoned")
+            .clone()
     }
 
     pub fn index_metadata(&self) -> IndexMetadata {
-        let mut metadata = self.index_metadata.clone();
+        let mut metadata = self
+            .index_metadata
+            .read()
+            .expect("search metadata lock poisoned")
+            .clone();
         metadata.indexed_at_unix_ms =
             index_timestamp_unix_ms(&self.index_dir).or(metadata.indexed_at_unix_ms);
         metadata
@@ -220,6 +228,168 @@ impl SearchIndex {
             indexed_at_unix_ms: indexed_at,
             sources,
         })
+    }
+
+    /// Trigger a lexical reindex without restarting the service.
+    pub fn reindex_scoped(
+        &self,
+        requested_sources: &[String],
+        workspace_paths: &[String],
+        reason: &str,
+    ) -> Result<ReindexReport, SearchError> {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return Err(SearchError::ReindexScope(
+                "reason must not be empty".to_string(),
+            ));
+        }
+        let _lock = self
+            .reindex_lock
+            .try_lock()
+            .map_err(|_| SearchError::ReindexBusy)?;
+        let effective_sources = self.resolve_reindex_sources(requested_sources, workspace_paths)?;
+
+        let scan_at_unix_ms = now_unix_ms();
+        let scanned_sources = scan_sources(&self.corpus_mounts, &self.config)?;
+        let scan_file_count = scanned_sources
+            .iter()
+            .map(|source| source.file_count)
+            .sum::<usize>();
+        let scan_total_bytes = scanned_sources
+            .iter()
+            .map(|source| source.total_bytes)
+            .sum::<u64>();
+
+        build_index(&self._index, &self.corpus_mounts, &self.fields, &self.config)?;
+        self.reader.reload()?;
+
+        let mut metadata = build_index_metadata(&self.index_dir, &scanned_sources);
+        metadata.indexed_at_unix_ms = index_timestamp_unix_ms(&self.index_dir);
+        {
+            let mut sources_guard = self.sources.write().map_err(|_| {
+                SearchError::ReindexState("sources lock poisoned".to_string())
+            })?;
+            *sources_guard = scanned_sources;
+        }
+        {
+            let mut metadata_guard = self.index_metadata.write().map_err(|_| {
+                SearchError::ReindexState("index metadata lock poisoned".to_string())
+            })?;
+            *metadata_guard = metadata.clone();
+        }
+
+        Ok(ReindexReport {
+            requested_sources: requested_sources.to_vec(),
+            effective_sources,
+            workspace_paths: workspace_paths.to_vec(),
+            reason: reason.to_string(),
+            indexed_at_unix_ms: metadata.indexed_at_unix_ms,
+            scan_at_unix_ms,
+            scan_file_count,
+            scan_total_bytes,
+        })
+    }
+
+    fn resolve_reindex_sources(
+        &self,
+        requested_sources: &[String],
+        workspace_paths: &[String],
+    ) -> Result<Vec<String>, SearchError> {
+        let sources = self.list_sources();
+        let mut known = HashMap::new();
+        for source in &sources {
+            known.insert(source.source.to_ascii_lowercase(), source.source.clone());
+        }
+
+        let mut selected = Vec::new();
+        if requested_sources.is_empty() {
+            selected.extend(
+                sources
+                    .iter()
+                    .filter(|source| source.source.starts_with("local-"))
+                    .map(|source| source.source.clone()),
+            );
+        } else {
+            for raw in requested_sources {
+                let source = raw.trim();
+                if source.is_empty() {
+                    continue;
+                }
+                if source.eq_ignore_ascii_case("local") {
+                    selected.extend(
+                        sources
+                            .iter()
+                            .filter(|source| source.source.starts_with("local-"))
+                            .map(|source| source.source.clone()),
+                    );
+                    continue;
+                }
+                let key = source.to_ascii_lowercase();
+                let Some(canonical) = known.get(&key) else {
+                    return Err(SearchError::ReindexScope(format!(
+                        "unknown source label: {key}"
+                    )));
+                };
+                selected.push(canonical.clone());
+            }
+        }
+        selected.sort();
+        selected.dedup();
+
+        if selected.is_empty() {
+            return Err(SearchError::ReindexScope(
+                "no eligible sources selected".to_string(),
+            ));
+        }
+        self.validate_workspace_paths(workspace_paths)?;
+        Ok(selected)
+    }
+
+    fn validate_workspace_paths(&self, workspace_paths: &[String]) -> Result<(), SearchError> {
+        if workspace_paths.is_empty() {
+            return Ok(());
+        }
+        let Some(workspace_root) = self.workspace_root() else {
+            return Err(SearchError::ReindexScope(
+                "workspace_paths require a configured local workspace mount".to_string(),
+            ));
+        };
+        let workspace_root = workspace_root.canonicalize()?;
+        for raw in workspace_paths {
+            let path = raw.trim();
+            if path.is_empty() {
+                return Err(SearchError::ReindexScope(
+                    "workspace_paths must not contain empty entries".to_string(),
+                ));
+            }
+            let rel = Path::new(path);
+            if rel.is_absolute() {
+                return Err(SearchError::ReindexScope(format!(
+                    "workspace_paths must be relative (got {path})"
+                )));
+            }
+            if rel.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            }) {
+                return Err(SearchError::ReindexScope(format!(
+                    "workspace_paths must not contain '..' or absolute prefixes (got {path})"
+                )));
+            }
+            let candidate = workspace_root.join(rel);
+            if let Ok(canonical) = candidate.canonicalize() {
+                if !canonical.starts_with(&workspace_root) {
+                    return Err(SearchError::ReindexScope(format!(
+                        "workspace path escapes configured workspace root: {path}"
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn workspace_root(&self) -> Option<PathBuf> {

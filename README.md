@@ -2,8 +2,9 @@
 
 `spark-mcp` is a Streamable HTTP MCP server for grounded search and retrieval
 over a local SPARK/Ada corpus. It indexes operator-managed documentation and
-source material, then exposes read-only MCP tools with citations suitable for
-agent workflows.
+source material, then exposes citation-first MCP tools for agent workflows.
+Retrieval tools are read-only; `spark.reindex` is an explicit audited
+maintenance tool.
 
 The default path is deterministic lexical search. Semantic search is optional
 and uses a local embedding index when explicitly enabled.
@@ -27,6 +28,7 @@ Default tools:
 - `spark.get_doc`
 - `spark.get_chunk`
 - `spark.index_status`
+- `spark.reindex`
 - `spark.hover`
 - `spark.llm_answer`
 - `spark_locate`
@@ -45,8 +47,8 @@ unconfigured until a provider runtime is enabled by the operator.
   hover, and snapshot contracts.
 - [Corpus sources](corpus/SOURCES.md): upstream source, license, local path, and
   refresh metadata for indexed third-party material.
-- [Scoped reindex no-go](docs/spark-reindex-parity-no-go-2026-02-23.md): why
-  Spark keeps restart-driven reindexing for now.
+- [Reindex parity decision](docs/spark-reindex-parity-no-go-2026-02-23.md):
+  historical no-go, superseded by the audited `spark.reindex` contract.
 - [Dependency governance](docs/dependency-governance.md): dependency selection
   and upgrade policy.
 

@@ -1,8 +1,8 @@
 # Security Model
 
 `spark-mcp` exposes read-only search and retrieval over an operator-managed
-SPARK/Ada corpus. Runtime mutation is intentionally limited: Spark does not
-provide scoped in-process reindexing in the current architecture.
+SPARK/Ada corpus, plus one explicit audited maintenance operation:
+`spark.reindex`.
 
 ## Authentication
 
@@ -61,11 +61,16 @@ download caches.
 
 ## Reindex posture
 
-Spark's current index build path is whole-index oriented. The server reports
-refresh guidance through `spark.index_status`, but scoped in-process reindexing
-is intentionally not exposed until safe non-destructive scoped rebuild
-semantics exist. See
-`docs/spark-reindex-parity-no-go-2026-02-23.md`.
+Spark's current index build path is whole-index oriented, so `spark.reindex`
+validates a local scope request but refreshes the lexical index as one
+single-flight operation. The default tool path is local-only, requires an audit
+reason, rejects traversal-style workspace paths, and reserves broad source
+selection for `full_reindex=true` with `SPARK_MCP_REINDEX_ALLOW_FULL=1`.
+
+`spark.index_status` reports the current freshness state and the exact
+`spark.reindex` command to run when local sources are stale. See
+`docs/spark-reindex-parity-no-go-2026-02-23.md` for the historical no-go that
+this contract supersedes.
 
 ## Hover controls
 

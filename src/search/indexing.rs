@@ -751,6 +751,13 @@ fn index_timestamp_unix_ms(index_dir: &Path) -> Option<u64> {
         .map(|duration| duration.as_millis() as u64)
 }
 
+fn now_unix_ms() -> Option<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis() as u64)
+}
+
 fn clamp_limit(requested: Option<usize>, default_limit: usize, max_limit: usize) -> usize {
     requested.unwrap_or(default_limit).min(max_limit).max(1)
 }
