@@ -155,6 +155,8 @@ impl AutoReindexer {
 
     async fn run_loop(self: Arc<Self>) {
         loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
             let pending = {
                 let state = self.state.lock().await;
                 if state.running {
@@ -165,14 +167,14 @@ impl AutoReindexer {
             };
 
             let Some(pending) = pending else {
-                self.notify.notified().await;
+                notified.as_mut().await;
                 continue;
             };
 
             if let Some(delay) = pending.due_at.checked_duration_since(Instant::now()) {
                 tokio::select! {
                     _ = tokio::time::sleep(delay) => {}
-                    _ = self.notify.notified() => {}
+                    _ = &mut notified => {}
                 }
                 continue;
             }
@@ -280,11 +282,39 @@ fn merge_request(mut left: ReindexRequest, right: ReindexRequest) -> ReindexRequ
 }
 
 fn merge_workspace_paths(left: Vec<String>, right: Vec<String>) -> Vec<String> {
-    if left.is_empty() || right.is_empty() {
-        return Vec::new();
+    let mut merged = left;
+    merged.extend(right);
+    merged.sort();
+    merged.dedup();
+    merged
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_workspace_paths;
+
+    #[test]
+    fn merge_workspace_paths_unions_distinct_non_empty_paths() {
+        let merged = merge_workspace_paths(
+            vec!["spark/src/a.ads".to_string()],
+            vec!["spark/src/b.ads".to_string()],
+        );
+
+        assert_eq!(
+            merged,
+            vec!["spark/src/a.ads".to_string(), "spark/src/b.ads".to_string()]
+        );
     }
-    if left == right {
-        return left;
+
+    #[test]
+    fn merge_workspace_paths_preserves_non_empty_side() {
+        assert_eq!(
+            merge_workspace_paths(Vec::new(), vec!["spark/src/a.ads".to_string()]),
+            vec!["spark/src/a.ads".to_string()]
+        );
+        assert_eq!(
+            merge_workspace_paths(vec!["spark/src/a.ads".to_string()], Vec::new()),
+            vec!["spark/src/a.ads".to_string()]
+        );
     }
-    Vec::new()
 }

@@ -381,12 +381,15 @@ impl SearchIndex {
                 )));
             }
             let candidate = workspace_root.join(rel);
-            if let Ok(canonical) = candidate.canonicalize() {
-                if !canonical.starts_with(&workspace_root) {
-                    return Err(SearchError::ReindexScope(format!(
-                        "workspace path escapes configured workspace root: {path}"
-                    )));
-                }
+            let canonical = candidate.canonicalize().map_err(|err| {
+                SearchError::ReindexScope(format!(
+                    "failed to canonicalize workspace path {path}: {err}"
+                ))
+            })?;
+            if !canonical.starts_with(&workspace_root) {
+                return Err(SearchError::ReindexScope(format!(
+                    "workspace path escapes configured workspace root: {path}"
+                )));
             }
         }
         Ok(())

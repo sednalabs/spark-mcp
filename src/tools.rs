@@ -342,28 +342,26 @@ fn normalize_workspace_paths(values: Option<Vec<String>>) -> Result<Vec<String>,
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for raw in values.unwrap_or_default() {
-        for part in raw.split(',') {
-            let trimmed = part.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let path = PathBuf::from(trimmed);
-            if path.is_absolute() {
-                return Err(format!("workspace_paths must be relative (got {trimmed})"));
-            }
-            for component in path.components() {
-                match component {
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                        return Err(format!(
-                            "workspace_paths must not contain '..' or absolute prefixes (got {trimmed})"
-                        ));
-                    }
-                    Component::CurDir | Component::Normal(_) => {}
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(trimmed);
+        if path.is_absolute() {
+            return Err(format!("workspace_paths must be relative (got {trimmed})"));
+        }
+        for component in path.components() {
+            match component {
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    return Err(format!(
+                        "workspace_paths must not contain '..' or absolute prefixes (got {trimmed})"
+                    ));
                 }
+                Component::CurDir | Component::Normal(_) => {}
             }
-            if seen.insert(trimmed.to_string()) {
-                out.push(trimmed.to_string());
-            }
+        }
+        if seen.insert(trimmed.to_string()) {
+            out.push(trimmed.to_string());
         }
     }
     Ok(out)
@@ -1622,6 +1620,11 @@ mod tests {
                 "procedure Gateway_Decision is\nprocedure Policy_Kernel is\n-- policy_kernel hardening path\n-- policy::kernel fallback probe\n-- refresh workflow notes",
             )
             .expect("write local file");
+            fs::write(
+                local_mount.join("src/policy,gateway.ads"),
+                "procedure Gateway_Comma_Path is",
+            )
+            .expect("write comma path local file");
 
             let search = SearchIndex::open_or_create(
                 &corpus_dir,
@@ -1666,6 +1669,10 @@ mod tests {
                 "procedure Gateway_Decision is\nprocedure Gateway_Decision_Updated is",
             )
             .expect("mutate local file");
+        }
+
+        fn workspace_relative_path(&self, path_under_local_mount: &str) -> String {
+            format!("spark/{path_under_local_mount}")
         }
     }
 
@@ -2161,6 +2168,54 @@ mod tests {
             .expect_err("non-local scope rejected");
 
         assert!(err.to_string().contains("not allowed in scoped mode"));
+    }
+
+    #[tokio::test]
+    async fn spark_reindex_rejects_missing_workspace_path_fail_closed() {
+        let harness = HoverToolHarness::new();
+
+        let err = harness
+            .server
+            .spark_reindex(Parameters(ReindexArgs {
+                sources: Some(vec!["local".to_string()]),
+                workspace_paths: Some(vec![harness.workspace_relative_path("src/missing.ads")]),
+                full_reindex: false,
+                reason: "refresh missing local path".to_string(),
+            }))
+            .await
+            .expect_err("missing workspace path rejected");
+
+        assert!(
+            err.to_string()
+                .contains("failed to canonicalize workspace path")
+        );
+    }
+
+    #[tokio::test]
+    async fn spark_reindex_preserves_comma_in_workspace_path() {
+        let harness = HoverToolHarness::new();
+        let comma_path = harness.workspace_relative_path("src/policy,gateway.ads");
+
+        let reindex = extract_structured(
+            harness
+                .server
+                .spark_reindex(Parameters(ReindexArgs {
+                    sources: Some(vec!["local".to_string()]),
+                    workspace_paths: Some(vec![comma_path.clone()]),
+                    full_reindex: false,
+                    reason: "refresh comma path".to_string(),
+                }))
+                .await
+                .expect("comma path reindex succeeds"),
+        );
+
+        let paths = reindex
+            .get("reindex")
+            .and_then(|value| value.get("workspace_paths"))
+            .and_then(|value| value.as_array())
+            .expect("workspace paths array");
+        let rendered_paths = paths.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+        assert_eq!(rendered_paths, vec![Some(comma_path.as_str())]);
     }
 
     #[tokio::test]
