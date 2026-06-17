@@ -368,30 +368,28 @@ fn build_index_status(
         "local_sources": local_sources,
         "workspace_root": workspace_root,
         "refresh": {
-            "mode": "restart_with_reindex",
-            "supports_scoped_in_process_refresh": false,
+            "mode": "in_process_reindex",
+            "supports_scoped_in_process_refresh": true,
             "reason_required": true,
-            "default_scope": "all_local_sources",
+            "default_scope": "local",
             "status": if local_any_stale { "stale" } else { "fresh" },
-            "next_action": if local_any_stale { "run_refresh_preset" } else { "none" },
-            "build_helper_preset": "spark.mcp-refresh-local",
+            "next_action": if local_any_stale { "run_in_process_reindex" } else { "none" },
+            "tool": "spark.reindex",
             "reason_contract": {
                 "required": true,
-                "transport": "build_helper_note",
+                "transport": "tool_reason",
                 "example": "local-spark stale after edits",
-                "description": "record a short audit reason in build.start_and_wait note"
+                "description": "pass a short reason to spark.reindex.reason"
             },
             "commands": [
-                "build_helper_mcp/build.start_and_wait preset_id=spark.mcp-refresh-local note=\"<reason>\"",
-                "SPARK_MCP_SEMANTIC_ENABLED=0 SPARK_MCP_REINDEX=1 cargo run --release --bin spark-mcp",
-                "./scripts/ingest_docs.sh && SPARK_MCP_SEMANTIC_ENABLED=0 SPARK_MCP_REINDEX=1 cargo run --release --bin spark-mcp"
+                "spark.reindex {\"reason\":\"<reason>\",\"sources\":[\"local\"]}"
             ],
             "post_refresh_verify": [
                 "spark.index_status -> local_freshness.any_stale == false",
                 "spark.search source=local-spark include_context=true for edited symbol/file",
                 "spark.hover on edited file position resolves expected symbol"
             ],
-            "guidance": "Use the first command after local edits; use the second when corpus ingestion sources changed."
+            "guidance": "Prefer spark.reindex for in-process refresh; use restart-driven SPARK_MCP_REINDEX=1 only when operating outside MCP tool context."
         }
     });
     if let Some(stats) = session {

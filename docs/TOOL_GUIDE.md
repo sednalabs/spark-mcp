@@ -12,6 +12,7 @@ tool calls require bearer auth at the HTTP layer.
 | `spark.get_doc` | Fetch a full corpus document by `doc_id`. |
 | `spark.get_chunk` | Fetch a specific chunk by `doc_id` and `chunk_index`. |
 | `spark.index_status` | Report index metadata, corpus counts, freshness, and refresh hints. |
+| `spark.reindex` | Trigger an audited in-process lexical reindex; local-only by default. |
 | `spark.hover` | Resolve lexical symbol/snippet context for a file location. |
 | `spark.llm_answer` | Provider-agnostic grounded-answer adapter; inactive until configured. |
 | `spark_locate` | Locate symbol definitions or references. |
@@ -76,8 +77,16 @@ results are operational context, not corpus citations.
 ## Refresh flow
 
 Use `spark.index_status` first. If local sources are stale, follow the reported
-restart-with-reindex runbook. Scoped in-process reindexing is intentionally not
-exposed in the current architecture.
+`spark.reindex` command and include a short operational reason:
+
+```json
+{"reason":"local-spark stale after edits","sources":["local"]}
+```
+
+`spark.reindex` is local-only by default and single-flight. Broad source
+selection requires `full_reindex=true` and `SPARK_MCP_REINDEX_ALLOW_FULL=1`.
+After refresh, verify `local_freshness.any_stale == false` and rerun the search
+or hover query that originally exposed the stale result.
 
 ## Snapshot contract
 

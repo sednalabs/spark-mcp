@@ -8,7 +8,8 @@
 //! availability and agent intent.
 //!
 //! ## Security Boundaries
-//! * **Read-Only Enforcement**: All tools are guaranteed to have no side effects on the filesystem.
+//! * **Read-Mostly Enforcement**: Retrieval tools have no filesystem side effects; `spark.reindex`
+//!   is the explicit audited maintenance tool and requires a reason.
 //! * **Input Validation**: Ensures that document IDs are properly sanitized before retrieval.
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -19,8 +20,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
+use crate::auto_reindex::{ReindexError, ReindexErrorKind, ReindexRequest};
 use crate::llm::{LlmAnswerRequest, LlmProvider, LlmRuntime};
 use crate::search::{
     LexicalQueryKind, LineContext, SearchError, SearchHit, SearchMode, SourceSummary, SymbolMatch,
@@ -119,6 +121,22 @@ pub struct ListSourcesArgs {}
 /// Arguments for `spark.index_status`.
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 pub struct IndexStatusArgs {}
+
+/// Arguments for `spark.reindex`.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct ReindexArgs {
+    /// Optional source labels. Defaults to local-only when `full_reindex` is false.
+    #[serde(default)]
+    pub sources: Option<Vec<String>>,
+    /// Optional workspace-relative paths used for audit/scoped validation.
+    #[serde(default)]
+    pub workspace_paths: Option<Vec<String>>,
+    /// Allow broad source selection (requires `SPARK_MCP_REINDEX_ALLOW_FULL=1`).
+    #[serde(default)]
+    pub full_reindex: bool,
+    /// Required audit reason for running reindex.
+    pub reason: String,
+}
 
 /// Arguments for `spark.get_doc`.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -283,6 +301,79 @@ fn split_source_values(value: &str) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string())
         .collect()
+}
+
+fn full_reindex_allowed() -> bool {
+    std::env::var("SPARK_MCP_REINDEX_ALLOW_FULL")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn is_local_scope(value: &str) -> bool {
+    let lower = value.trim().to_ascii_lowercase();
+    lower == "local" || lower.starts_with("local-")
+}
+
+fn normalize_scope_values(values: Option<Vec<String>>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for raw in values.unwrap_or_default() {
+        for part in split_source_values(&raw) {
+            let trimmed = part.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let canonical = trimmed.to_ascii_lowercase();
+            if seen.insert(canonical.clone()) {
+                out.push(canonical);
+            }
+        }
+    }
+    out
+}
+
+fn normalize_workspace_paths(values: Option<Vec<String>>) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for raw in values.unwrap_or_default() {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(trimmed);
+        if path.is_absolute() {
+            return Err(format!("workspace_paths must be relative (got {trimmed})"));
+        }
+        for component in path.components() {
+            match component {
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    return Err(format!(
+                        "workspace_paths must not contain '..' or absolute prefixes (got {trimmed})"
+                    ));
+                }
+                Component::CurDir | Component::Normal(_) => {}
+            }
+        }
+        if seen.insert(trimmed.to_string()) {
+            out.push(trimmed.to_string());
+        }
+    }
+    Ok(out)
+}
+
+fn map_reindex_error(err: ReindexError) -> crate::McpError {
+    match err.kind {
+        ReindexErrorKind::Scope | ReindexErrorKind::Busy => {
+            crate::McpError::invalid_params(err.message, None)
+        }
+        ReindexErrorKind::Internal => crate::McpError::internal_error(err.message, None),
+    }
 }
 
 fn resolve_source_filter(
@@ -657,7 +748,7 @@ impl SparkMcp {
             })));
         }
         let limit = args.limit.map(|v| v as usize);
-        let available_sources = self.search.list_sources().to_vec();
+        let available_sources = self.search.list_sources();
         let source_filter = resolve_source_filter(
             args.sources.clone(),
             args.source.clone(),
@@ -1074,31 +1165,101 @@ impl SparkMcp {
                 "failure_reasons": hover_telemetry.failure_reason_counts,
             },
             "refresh": {
-                "mode": "restart_with_reindex",
-                "supports_scoped_in_process_refresh": false,
+                "mode": "in_process_reindex",
+                "supports_scoped_in_process_refresh": true,
                 "reason_required": true,
-                "default_scope": "all_local_sources",
+                "default_scope": "local",
                 "status": if local_any_stale { "stale" } else { "fresh" },
-                "next_action": if local_any_stale { "run_refresh_preset" } else { "none" },
-                "build_helper_preset": "spark.mcp-refresh-local",
+                "next_action": if local_any_stale { "run_in_process_reindex" } else { "none" },
+                "tool": "spark.reindex",
                 "reason_contract": {
                     "required": true,
-                    "transport": "build_helper_note",
+                    "transport": "tool_reason",
                     "example": "local-spark stale after edits",
-                    "description": "record a short audit reason in build.start_and_wait note"
+                    "description": "pass a short reason to spark.reindex.reason"
                 },
                 "commands": [
-                    "build_helper_mcp/build.start_and_wait preset_id=spark.mcp-refresh-local note=\"<reason>\"",
-                    "SPARK_MCP_SEMANTIC_ENABLED=0 SPARK_MCP_REINDEX=1 cargo run --release --bin spark-mcp",
-                    "./scripts/ingest_docs.sh && SPARK_MCP_SEMANTIC_ENABLED=0 SPARK_MCP_REINDEX=1 cargo run --release --bin spark-mcp"
+                    "spark.reindex {\"reason\":\"<reason>\",\"sources\":[\"local\"]}"
                 ],
                 "post_refresh_verify": [
                     "spark.index_status -> local_freshness.any_stale == false",
                     "spark.search source=local-spark include_context=true for edited symbol/file",
                     "spark.hover on edited file position resolves expected symbol"
                 ],
-                "guidance": "Use the first command after local edits; use the second when corpus ingestion sources changed."
+                "guidance": "Prefer spark.reindex for in-process refresh; use restart-driven SPARK_MCP_REINDEX=1 only when operating outside MCP tool context."
             },
+        })))
+    }
+
+    /// Trigger an audited lexical reindex without restarting the service.
+    #[tool(
+        name = "spark.reindex",
+        description = "Trigger an audited lexical reindex (local-only by default, single-flight)."
+    )]
+    async fn spark_reindex(
+        &self,
+        Parameters(args): Parameters<ReindexArgs>,
+    ) -> Result<CallToolResult, crate::McpError> {
+        let reason = args.reason.trim();
+        if reason.is_empty() {
+            return Err(crate::McpError::invalid_params(
+                "reason must not be empty",
+                None,
+            ));
+        }
+
+        let mut requested_sources = normalize_scope_values(args.sources);
+        if args.full_reindex {
+            if !full_reindex_allowed() {
+                return Err(crate::McpError::invalid_params(
+                    "full_reindex requires SPARK_MCP_REINDEX_ALLOW_FULL=1",
+                    None,
+                ));
+            }
+            if requested_sources.is_empty() {
+                requested_sources = self
+                    .search
+                    .list_sources()
+                    .into_iter()
+                    .map(|source| source.source)
+                    .filter(|source| !source.trim().is_empty())
+                    .collect();
+            }
+        } else {
+            if requested_sources.is_empty() {
+                requested_sources.push("local".to_string());
+            }
+            if let Some(non_local) = requested_sources
+                .iter()
+                .find(|value| !is_local_scope(value))
+            {
+                return Err(crate::McpError::invalid_params(
+                    format!(
+                        "source '{non_local}' is not allowed in scoped mode; set full_reindex=true with SPARK_MCP_REINDEX_ALLOW_FULL=1 for broad scope"
+                    ),
+                    None,
+                ));
+            }
+        }
+
+        let workspace_paths = normalize_workspace_paths(args.workspace_paths)
+            .map_err(|message| crate::McpError::invalid_params(message, None))?;
+        let request = ReindexRequest {
+            sources: requested_sources,
+            workspace_paths,
+            reason: reason.to_string(),
+        };
+        let report = self
+            .reindexer
+            .force_and_wait(request)
+            .await
+            .map_err(map_reindex_error)?;
+
+        Ok(CallToolResult::structured(json!({
+            "status": "ok",
+            "reindex": report,
+            "index": self.search.index_metadata(),
+            "sources": self.search.list_sources(),
         })))
     }
 
@@ -1200,7 +1361,7 @@ impl SparkMcp {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
         let include_context = args.include_context.unwrap_or(true);
-        let available_sources = self.search.list_sources().to_vec();
+        let available_sources = self.search.list_sources();
         let input_kind = classify_hover_input_kind(file, &available_sources);
         self.record_hover_input_kind(input_kind);
 
@@ -1368,9 +1529,10 @@ impl SparkMcp {
 #[cfg(test)]
 mod tests {
     use super::{
-        HoverArgs, IndexStatusArgs, QueryShortcut, SearchArgs, SearchModeArg, SearchQueryKindArg,
-        parse_query_shortcut, resolve_source_filter,
+        HoverArgs, IndexStatusArgs, QueryShortcut, ReindexArgs, SearchArgs, SearchModeArg,
+        SearchQueryKindArg, normalize_workspace_paths, parse_query_shortcut, resolve_source_filter,
     };
+    use crate::auto_reindex::AutoReindexer;
     use crate::config::ResumeMode;
     use crate::search::{
         CorpusMountConfig, HnswConfig, SearchConfig, SearchIndex, SemanticBackend, SemanticConfig,
@@ -1458,7 +1620,6 @@ mod tests {
                 "procedure Gateway_Decision is\nprocedure Policy_Kernel is\n-- policy_kernel hardening path\n-- policy::kernel fallback probe\n-- refresh workflow notes",
             )
             .expect("write local file");
-
             let search = SearchIndex::open_or_create(
                 &corpus_dir,
                 &index_dir,
@@ -1478,7 +1639,9 @@ mod tests {
                     config
                 },
             ));
-            let server = SparkMcp::new(Arc::new(search), session_manager, ResumeMode::Off);
+            let search = Arc::new(search);
+            let reindexer = AutoReindexer::new(search.clone(), Duration::from_millis(1));
+            let server = SparkMcp::new(search, reindexer, session_manager, ResumeMode::Off);
             Self {
                 workspace_root,
                 corpus_dir,
@@ -1500,6 +1663,10 @@ mod tests {
                 "procedure Gateway_Decision is\nprocedure Gateway_Decision_Updated is",
             )
             .expect("mutate local file");
+        }
+
+        fn workspace_relative_path(&self, path_under_local_mount: &str) -> String {
+            format!("spark/{path_under_local_mount}")
         }
     }
 
@@ -1572,6 +1739,15 @@ mod tests {
         let (shortcut, query) = parse_query_shortcut("plain query");
         assert!(shortcut.is_none());
         assert_eq!(query, "plain query");
+    }
+
+    #[test]
+    fn normalize_workspace_paths_preserves_commas_inside_json_array_values() {
+        let paths =
+            normalize_workspace_paths(Some(vec!["spark/src/policy,gateway.ads".to_string()]))
+                .expect("workspace path normalizes");
+
+        assert_eq!(paths, vec!["spark/src/policy,gateway.ads".to_string()]);
     }
 
     #[test]
@@ -1864,7 +2040,13 @@ mod tests {
         let refresh = status.get("refresh").expect("refresh block");
         assert_eq!(
             refresh.get("mode").and_then(|value| value.as_str()),
-            Some("restart_with_reindex")
+            Some("in_process_reindex")
+        );
+        assert_eq!(
+            refresh
+                .get("supports_scoped_in_process_refresh")
+                .and_then(|value| value.as_bool()),
+            Some(true)
         );
         assert_eq!(
             refresh
@@ -1873,10 +2055,8 @@ mod tests {
             Some(true)
         );
         assert_eq!(
-            refresh
-                .get("build_helper_preset")
-                .and_then(|value| value.as_str()),
-            Some("spark.mcp-refresh-local")
+            refresh.get("tool").and_then(|value| value.as_str()),
+            Some("spark.reindex")
         );
 
         let local_freshness = status.get("local_freshness").expect("local freshness");
@@ -1891,7 +2071,7 @@ mod tests {
         assert_eq!(
             refresh.get("next_action").and_then(|value| value.as_str()),
             Some(if any_stale {
-                "run_refresh_preset"
+                "run_in_process_reindex"
             } else {
                 "none"
             })
@@ -1935,7 +2115,7 @@ mod tests {
         );
         assert_eq!(
             refresh.get("next_action").and_then(|value| value.as_str()),
-            Some("run_refresh_preset")
+            Some("run_in_process_reindex")
         );
         let sources = local_freshness
             .get("sources")
@@ -1954,6 +2134,140 @@ mod tests {
         assert_eq!(
             local.get("stale").and_then(|value| value.as_bool()),
             Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn spark_reindex_rejects_empty_reason() {
+        let harness = HoverToolHarness::new();
+
+        let err = harness
+            .server
+            .spark_reindex(Parameters(ReindexArgs {
+                sources: None,
+                workspace_paths: None,
+                full_reindex: false,
+                reason: "   ".to_string(),
+            }))
+            .await
+            .expect_err("empty reason rejected");
+
+        assert!(err.to_string().contains("reason must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn spark_reindex_rejects_non_local_scope_without_full_opt_in() {
+        let harness = HoverToolHarness::new();
+
+        let err = harness
+            .server
+            .spark_reindex(Parameters(ReindexArgs {
+                sources: Some(vec!["seed".to_string()]),
+                workspace_paths: None,
+                full_reindex: false,
+                reason: "refresh local edit".to_string(),
+            }))
+            .await
+            .expect_err("non-local scope rejected");
+
+        assert!(err.to_string().contains("not allowed in scoped mode"));
+    }
+
+    #[tokio::test]
+    async fn spark_reindex_rejects_missing_workspace_path_fail_closed() {
+        let harness = HoverToolHarness::new();
+
+        let err = harness
+            .server
+            .spark_reindex(Parameters(ReindexArgs {
+                sources: Some(vec!["local".to_string()]),
+                workspace_paths: Some(vec![harness.workspace_relative_path("src/missing.ads")]),
+                full_reindex: false,
+                reason: "refresh missing local path".to_string(),
+            }))
+            .await
+            .expect_err("missing workspace path rejected");
+
+        assert!(
+            err.to_string()
+                .contains("failed to canonicalize workspace path")
+        );
+    }
+
+    #[tokio::test]
+    async fn spark_reindex_refreshes_stale_local_source_in_process() {
+        let harness = HoverToolHarness::new();
+        harness.mutate_local_file();
+
+        let stale_status = extract_structured(
+            harness
+                .server
+                .spark_index_status(Parameters(IndexStatusArgs {}))
+                .await
+                .expect("stale index status"),
+        );
+        assert_eq!(
+            stale_status
+                .get("local_freshness")
+                .and_then(|value| value.get("any_stale"))
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+
+        let reindex = extract_structured(
+            harness
+                .server
+                .spark_reindex(Parameters(ReindexArgs {
+                    sources: Some(vec!["local".to_string()]),
+                    workspace_paths: None,
+                    full_reindex: false,
+                    reason: "refresh edited local source".to_string(),
+                }))
+                .await
+                .expect("reindex succeeds"),
+        );
+        assert_eq!(
+            reindex.get("status").and_then(|value| value.as_str()),
+            Some("ok")
+        );
+        assert_eq!(
+            reindex
+                .get("reindex")
+                .and_then(|value| value.get("effective_sources"))
+                .and_then(|value| value.as_array())
+                .map(|values| values.iter().any(|value| value == "local-spark")),
+            Some(true)
+        );
+
+        let fresh_status = extract_structured(
+            harness
+                .server
+                .spark_index_status(Parameters(IndexStatusArgs {}))
+                .await
+                .expect("fresh index status"),
+        );
+        assert_eq!(
+            fresh_status
+                .get("local_freshness")
+                .and_then(|value| value.get("any_stale"))
+                .and_then(|value| value.as_bool()),
+            Some(false)
+        );
+
+        let search = extract_structured(
+            harness
+                .server
+                .spark_search(Parameters(search_args("Gateway_Decision_Updated")))
+                .await
+                .expect("search updated symbol"),
+        );
+        let results = search
+            .get("results")
+            .and_then(|value| value.as_array())
+            .expect("results array");
+        assert!(
+            !results.is_empty(),
+            "updated local symbol should be searchable"
         );
     }
 

@@ -3,7 +3,20 @@
 Last updated: February 23, 2026
 
 ## Decision
-`NO-GO` for now: do not add `spark.reindex` scoped in-process parity in the current architecture.
+Superseded: Spark now exposes `spark.reindex` as an audited in-process lexical refresh tool.
+The original `NO-GO` decision below remains as historical context for the guardrails.
+
+The implemented contract keeps the important safety outcome from the no-go:
+Spark still does not pretend it has non-destructive partial index mutation.
+`spark.reindex` validates requested local scope, requires a reason, uses
+single-flight concurrency, and refreshes the lexical index as a whole-index
+operation so unaffected sources are not accidentally dropped.
+
+Broad refresh is deliberately gated with `full_reindex=true` and
+`SPARK_MCP_REINDEX_ALLOW_FULL=1`.
+
+## Historical Decision
+`NO-GO` at the time: do not add `spark.reindex` scoped in-process parity in the previous architecture.
 
 ## Why (Safety Gate Outcome)
 The current Spark indexing runtime cannot satisfy fail-closed scoped-reindex invariants without a
@@ -25,6 +38,9 @@ Scoped in-process reindex parity should only be reconsidered once Spark has all 
 3. Strict scope/path validation (relative-only, no traversal, local-root constrained).
 4. Auditable reindex contract (`reason` required, deterministic report payload).
 5. Negative tests proving fail-closed behavior for invalid scope/path and concurrent requests.
+
+The current implementation satisfies items 2-5 and avoids item 1 by performing a validated
+local-scope whole-index refresh instead of destructive partial replacement.
 
 ## Revisit Trigger
 Re-open implementation only when an approved architecture change introduces safe incremental/scoped

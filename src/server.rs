@@ -9,11 +9,13 @@
 //!
 //! ## Security Boundaries
 //! * **Corpus Gating**: Only documents within the verified corpus directory are accessible.
-//! * **Tool Gating**: Restricts tool execution to pure retrieval operations.
+//! * **Tool Gating**: Restricts ordinary tools to retrieval and exposes reindexing only through
+//!   an explicit audited maintenance tool.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use crate::auto_reindex::AutoReindexer;
 use mcp_toolkit_core::rmcp_models;
 use mcp_toolkit_http::session::BoundedSessionManager;
 use rmcp::handler::server::prompt::PromptContext;
@@ -37,6 +39,7 @@ use crate::search::SearchIndex;
 #[derive(Clone)]
 pub struct SparkMcp {
     pub search: Arc<SearchIndex>,
+    pub reindexer: Arc<AutoReindexer>,
     tool_router: ToolRouter<SparkMcp>,
     prompt_router: PromptRouter<SparkMcp>,
     session_manager: Arc<BoundedSessionManager>,
@@ -60,6 +63,7 @@ impl SparkMcp {
     /// Construct a new MCP server handler with its dependencies.
     pub fn new(
         search: Arc<SearchIndex>,
+        reindexer: Arc<AutoReindexer>,
         session_manager: Arc<BoundedSessionManager>,
         resume_mode: ResumeMode,
     ) -> Self {
@@ -67,6 +71,7 @@ impl SparkMcp {
         let prompt_router = Self::prompt_router_spark();
         Self {
             search,
+            reindexer,
             tool_router,
             prompt_router,
             session_manager,

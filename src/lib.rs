@@ -12,6 +12,7 @@
 //! * **I/O Isolation**: Strictly limits file access to the configured corpus directory.
 //!
 pub mod admission;
+pub mod auto_reindex;
 pub mod config;
 pub mod llm;
 pub mod prompts;
