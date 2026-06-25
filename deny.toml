@@ -6,7 +6,8 @@ all-features = true
 version = 2
 yanked = "deny"
 ignore = [
-  # Transitive semantic-search/indexing advisories tracked in docs/dependency-governance.md.
+  # Transitive semantic-search/indexing warnings tracked in docs/dependency-governance.md.
+  # Reviewed 2026-06-25; renew-by 2026-08-31 unless upstream paths retire first.
   "RUSTSEC-2024-0436",
   "RUSTSEC-2025-0141",
 ]

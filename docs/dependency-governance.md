@@ -85,5 +85,5 @@ Current release exceptions:
 
 | Advisory | Source | Rationale | Expiry |
 | --- | --- | --- | --- |
-| `RUSTSEC-2024-0436` | `paste` via `tokenizers`/`fastembed` | Transitive optional semantic-search dependency; revisit when the embedding stack removes it. | 2026-07-31 |
-| `RUSTSEC-2025-0141` | `bincode` via `hnsw_rs` and semantic index serialization | Unmaintained advisory with no direct vulnerability; revisit before publishing semantic index artifacts or changing serialization format. | 2026-07-31 |
+| `RUSTSEC-2024-0436` | `paste` via `tokenizers` 0.22.2 and `fastembed` 5.17.2 | Reviewed 2026-06-25. Updating the embedding stack to `fastembed` 5.17.2 does not remove `paste`; semantic search remains opt-in. Revisit when the embedding stack removes this path. | 2026-08-31 |
+| `RUSTSEC-2025-0141` | `bincode` 1.3.3 via direct semantic embedding serialization and `hnsw_rs` 0.3.4 | Reviewed 2026-06-25. `hnsw_rs` 0.3.4 is the latest upstream release and still depends on `bincode` 1.x. Revisit before publishing semantic index artifacts or changing the serialization/index backend. | 2026-08-31 |

@@ -110,6 +110,7 @@ run_workspace_checks() {
   echo "[workspace: ${workspace_dir}] [2/3] cargo audit (RustSec)"
   (
     cd "${workspace_path}"
+    # Reviewed 2026-06-25; see docs/dependency-governance.md for evidence.
     run_cmd cargo audit --deny warnings \
       --ignore RUSTSEC-2024-0436 \
       --ignore RUSTSEC-2025-0141
