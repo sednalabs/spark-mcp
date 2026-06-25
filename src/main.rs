@@ -23,7 +23,8 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::{
     HeaderMap, HeaderValue, Method, Request, StatusCode,
-    header::{CACHE_CONTROL, CONTENT_TYPE, WWW_AUTHENTICATE},
+    header::{CACHE_CONTROL, CONTENT_TYPE},
+    uri::{PathAndQuery, Uri},
 };
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -31,14 +32,13 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
 use axum::{Json, Router};
 use futures::stream;
-use mcp_toolkit_auth::challenge::{BearerChallenge, build_bearer_challenge_value};
-use mcp_toolkit_auth::{AuthContext, AuthError, Authenticator};
-use mcp_toolkit_core::tool_schema::{tool_names, tool_schema_snapshot_value};
-use mcp_toolkit_http::host::{base_url, validate_host_header};
-use mcp_toolkit_http::oauth::{
-    ResourceMetadata, authorization_server_metadata_url, oidc_metadata_url,
-    resource_metadata_default, resource_metadata_hint, resource_url_from_base,
+use mcp_toolkit_auth::surface::{
+    AuthSurfaceConfig, AuthSurfaceLayer, AuthorizationServerMetadataSource, IssuerEntry,
 };
+use mcp_toolkit_auth::{Authenticator, discover_oidc_metadata};
+use mcp_toolkit_core::tool_schema::{tool_names, tool_schema_snapshot_value};
+use mcp_toolkit_http::host::validate_host_header;
+use mcp_toolkit_http::oauth::AuthorizationServerMetadata;
 use mcp_toolkit_http::session::{
     BoundedSessionManager, EventStore, EventStoreConfig, RecordingSessionManager,
 };
@@ -71,7 +71,6 @@ use spark_mcp::server::SparkMcp;
 #[derive(Clone)]
 struct AppState {
     allowed_hosts: HashSet<String>,
-    default_host: String,
     session_manager: Arc<BoundedSessionManager>,
     stateful_service: StreamableHttpService<SparkMcp, RecordingSessionManager>,
     stateless_service: Option<StreamableHttpService<SparkMcp, RecordingSessionManager>>,
@@ -81,58 +80,9 @@ struct AppState {
     startup_admission_mode: StartupAdmissionMode,
     provenance: RuntimeProvenance,
     admission: AdmissionEvaluation,
-    auth: Arc<Authenticator>,
-    auth_realm: String,
-    auth_resource_url: Option<String>,
-    auth_issuer: Option<String>,
-    auth_scopes_supported: Vec<String>,
-    auth_allowed_client_ids: HashSet<String>,
 }
 
-fn base_url_for_state(headers: &HeaderMap, state: &AppState) -> String {
-    base_url(headers, &state.allowed_hosts, &state.default_host)
-}
-
-fn resource_url(headers: &HeaderMap, state: &AppState) -> String {
-    if let Some(url) = &state.auth_resource_url {
-        return url.clone();
-    }
-    let base = base_url_for_state(headers, state);
-    resource_url_from_base(&base, "/mcp")
-}
-
-fn resource_metadata(headers: &HeaderMap, state: &AppState) -> ResourceMetadata {
-    let resource = resource_url(headers, state);
-    let authorization_servers = if let Some(issuer) = &state.auth_issuer {
-        vec![issuer.clone()]
-    } else {
-        vec![base_url_for_state(headers, state)]
-    };
-    resource_metadata_default(
-        resource,
-        authorization_servers,
-        state.auth_scopes_supported.clone(),
-    )
-}
-
-fn build_challenge(state: &AppState, headers: &HeaderMap) -> Option<String> {
-    let resource = resource_url(headers, state);
-    let resource_metadata = resource_metadata_hint(&resource);
-    let scope = if state.auth_scopes_supported.is_empty() {
-        None
-    } else {
-        Some(state.auth_scopes_supported.join(" "))
-    };
-    let challenge = BearerChallenge {
-        realm: &state.auth_realm,
-        resource_metadata: resource_metadata.as_deref(),
-        scope: scope.as_deref(),
-        error: None,
-        error_description: None,
-        error_uri: None,
-    };
-    build_bearer_challenge_value(&challenge)
-}
+const LOG_ERROR_MAX: usize = 512;
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let stats = state.session_manager.stats().await;
@@ -184,100 +134,198 @@ fn admission_outcome_label(outcome: AdmissionOutcome) -> &'static str {
     }
 }
 
-async fn prm_metadata(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> impl axum::response::IntoResponse {
-    let metadata = resource_metadata(&headers, &state);
-    (StatusCode::OK, Json(metadata))
+fn public_base_url_from_bind_addr(bind_addr: &SocketAddr) -> String {
+    format!("http://{bind_addr}")
 }
 
-async fn oauth_authorization_metadata(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Response {
-    if let Some(issuer) = &state.auth_issuer {
-        let location = authorization_server_metadata_url(issuer);
-        return axum::response::Redirect::temporary(&location).into_response();
+fn public_base_url_from_resource_url(resource_url: &str) -> Result<Option<String>, String> {
+    let mut parsed =
+        url::Url::parse(resource_url).map_err(|err| format!("invalid auth resource URL: {err}"))?;
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+
+    let path = parsed.path().trim_end_matches('/').to_string();
+    let Some(prefix) = path.strip_suffix("/mcp") else {
+        return Ok(None);
+    };
+    if prefix.is_empty() {
+        parsed.set_path("/");
+    } else {
+        parsed.set_path(prefix);
     }
-    let base = base_url_for_state(&headers, &state);
-    Json(json!({ "issuer": base })).into_response()
-}
 
-async fn oidc_metadata(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if let Some(issuer) = &state.auth_issuer {
-        let location = oidc_metadata_url(issuer);
-        return axum::response::Redirect::temporary(&location).into_response();
+    let mut value = parsed.to_string();
+    while value.ends_with('/') {
+        value.pop();
     }
-    let base = base_url_for_state(&headers, &state);
-    Json(json!({ "issuer": base })).into_response()
+    Ok(Some(value))
 }
 
-fn auth_error_response(state: &AppState, headers: &HeaderMap, err: AuthError) -> Response<Body> {
-    let (status, error_code) = match err {
-        AuthError::MissingScopes => (StatusCode::FORBIDDEN, Some("insufficient_scope")),
-        AuthError::TokenExpired => (StatusCode::UNAUTHORIZED, Some("invalid_token")),
-        AuthError::InvalidToken | AuthError::ReplayDetected => {
-            (StatusCode::UNAUTHORIZED, Some("invalid_token"))
+fn fallback_oauth_endpoints(issuer: &str) -> (String, String) {
+    let trimmed = issuer.trim_end_matches('/');
+    if trimmed.contains("/realms/") {
+        return (
+            format!("{trimmed}/protocol/openid-connect/auth"),
+            format!("{trimmed}/protocol/openid-connect/token"),
+        );
+    }
+    (
+        format!("{trimmed}/oauth/authorize"),
+        format!("{trimmed}/oauth/token"),
+    )
+}
+
+fn url_uses_insecure_http(value: &str) -> bool {
+    url::Url::parse(value)
+        .map(|url| url.scheme() == "http")
+        .unwrap_or(false)
+}
+
+fn auth_surface_allow_insecure_http(config: &AuthSurfaceConfig) -> bool {
+    if url_uses_insecure_http(&config.public_base_url) {
+        return true;
+    }
+    config.entries.iter().any(|entry| {
+        url_uses_insecure_http(&entry.issuer)
+            || url_uses_insecure_http(&entry.authorization_endpoint)
+            || url_uses_insecure_http(&entry.token_endpoint)
+            || entry
+                .jwks_uri
+                .as_deref()
+                .map(url_uses_insecure_http)
+                .unwrap_or(false)
+            || entry
+                .introspection_endpoint
+                .as_deref()
+                .map(url_uses_insecure_http)
+                .unwrap_or(false)
+            || entry
+                .device_authorization_endpoint
+                .as_deref()
+                .map(url_uses_insecure_http)
+                .unwrap_or(false)
+            || entry
+                .resource_url_override
+                .as_deref()
+                .map(url_uses_insecure_http)
+                .unwrap_or(false)
+    })
+}
+
+async fn build_auth_surface_layer(
+    config: &spark_mcp::config::Config,
+    bind_addr: &SocketAddr,
+    auth: Arc<Authenticator>,
+) -> Result<AuthSurfaceLayer, String> {
+    let mut public_base_url = public_base_url_from_bind_addr(bind_addr);
+    if let Some(resource_url) = config.auth_resource_url.as_deref() {
+        match public_base_url_from_resource_url(resource_url)? {
+            Some(derived) => public_base_url = derived,
+            None => {
+                tracing::warn!(
+                    resource_url,
+                    "SPARK_MCP_AUTH_RESOURCE_URL does not end with /mcp; using bind address for auth surface base URL"
+                );
+            }
         }
-        AuthError::MissingToken => (StatusCode::UNAUTHORIZED, None),
-        AuthError::ConfigError(_) => (StatusCode::INTERNAL_SERVER_ERROR, None),
-        AuthError::Generic { status_code, .. } => (
-            StatusCode::from_u16(status_code).unwrap_or(StatusCode::UNAUTHORIZED),
-            None,
-        ),
+    }
+
+    let issuer = config
+        .auth_issuer
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| public_base_url.clone());
+
+    let (default_authz, default_token) = fallback_oauth_endpoints(&issuer);
+    let metadata_source = if config.auth_issuer.is_some() {
+        match discover_oidc_metadata(&issuer, None).await {
+            Ok(metadata) => AuthorizationServerMetadataSource::OidcDiscovery(metadata),
+            Err(err) => {
+                tracing::warn!(
+                    issuer,
+                    err = %err,
+                    "failed OIDC discovery for auth surface; using fallback OAuth endpoint URLs"
+                );
+                AuthorizationServerMetadataSource::Explicit(AuthorizationServerMetadata {
+                    issuer: issuer.clone(),
+                    authorization_endpoint: default_authz,
+                    token_endpoint: default_token,
+                    registration_endpoint: None,
+                    jwks_uri: config.auth_config.jwks_url.clone(),
+                    introspection_endpoint: config.auth_config.introspection_url.clone(),
+                    device_authorization_endpoint: None,
+                    grant_types_supported: None,
+                    client_id_metadata_document_supported: None,
+                    token_endpoint_auth_methods_supported: None,
+                    code_challenge_methods_supported: None,
+                })
+            }
+        }
+    } else {
+        AuthorizationServerMetadataSource::Explicit(AuthorizationServerMetadata {
+            issuer: issuer.clone(),
+            authorization_endpoint: default_authz,
+            token_endpoint: default_token,
+            registration_endpoint: None,
+            jwks_uri: config.auth_config.jwks_url.clone(),
+            introspection_endpoint: config.auth_config.introspection_url.clone(),
+            device_authorization_endpoint: None,
+            grant_types_supported: None,
+            client_id_metadata_document_supported: None,
+            token_endpoint_auth_methods_supported: None,
+            code_challenge_methods_supported: None,
+        })
     };
 
-    let mut challenge = build_challenge(state, headers);
-    if error_code.is_some() && challenge.is_some() {
-        if let Some(value) = &mut challenge {
-            value.push_str(&format!(", error=\"{}\"", error_code.unwrap()));
-        }
+    let mut mcp_entry = IssuerEntry::from_metadata_source(
+        "/mcp",
+        metadata_source,
+        config.auth_realm.clone(),
+        config.auth_scopes_supported.clone(),
+        config.auth_allowed_client_ids.iter().cloned().collect(),
+        auth,
+        config.auth_resource_url.clone(),
+    )
+    .map_err(|err| format!("invalid auth surface metadata: {err}"))?;
+    if let Some(jwks_url) = &config.auth_config.jwks_url {
+        mcp_entry.jwks_uri = Some(jwks_url.clone());
+    }
+    if let Some(introspection_url) = &config.auth_config.introspection_url {
+        mcp_entry.introspection_endpoint = Some(introspection_url.clone());
     }
 
-    let mut response = Response::builder().status(status);
-    if let Some(challenge) = challenge {
-        response = response.header(WWW_AUTHENTICATE, challenge);
-    }
-    response
-        .body(Body::from(format!("{err}")))
-        .unwrap_or_else(|_| Response::new(Body::from("auth error")))
+    let mut surface = AuthSurfaceConfig::single_issuer(public_base_url, mcp_entry);
+    surface.public_paths.insert("/health".to_string());
+    surface.public_paths.insert("/attest".to_string());
+    surface.allow_insecure_http = auth_surface_allow_insecure_http(&surface);
+
+    AuthSurfaceLayer::from_config(surface)
+        .map_err(|err| format!("invalid auth surface config: {err}"))
 }
 
-async fn auth_guard(
-    State(state): State<AppState>,
-    mut req: axum::extract::Request,
-    next: Next,
-) -> Response {
+async fn trim_trailing_slash(req: axum::extract::Request, next: Next) -> Response {
+    let mut req = req;
     let path = req.uri().path();
-    let is_discovery = path.starts_with("/.well-known/") || path.starts_with("/mcp/.well-known/");
-    if is_discovery || path == "/health" {
-        return next.run(req).await;
-    }
-    if !path.starts_with("/mcp") {
-        return next.run(req).await;
-    }
-
-    match state.auth.authenticate_headers(req.headers()).await {
-        Ok(context) => {
-            if !state.auth_allowed_client_ids.is_empty() {
-                let azp = context.azp.as_deref().unwrap_or_default();
-                if azp.is_empty() || !state.auth_allowed_client_ids.contains(azp) {
-                    let err = AuthError::Generic {
-                        message: "client_id is not allowed for this service".to_string(),
-                        status_code: StatusCode::FORBIDDEN.as_u16(),
-                        code: Some("AUTH_CLIENT_NOT_ALLOWED"),
-                        reason: Some("client_not_allowed"),
-                    };
-                    return auth_error_response(&state, req.headers(), err);
-                }
+    if path.len() > 1 && path.ends_with('/') {
+        let trimmed_path = path.trim_end_matches('/').to_string();
+        let query = req.uri().query().map(|q| q.to_string());
+        let normalized = match query {
+            Some(query) if !query.is_empty() => format!("{trimmed_path}?{query}"),
+            _ => trimmed_path,
+        };
+        if let Ok(path_and_query) = normalized.parse::<PathAndQuery>() {
+            let mut parts = req.uri().clone().into_parts();
+            parts.path_and_query = Some(path_and_query);
+            if let Ok(uri) = Uri::from_parts(parts) {
+                *req.uri_mut() = uri;
             }
-            req.extensions_mut().insert::<AuthContext>(context);
-            next.run(req).await
         }
-        Err(err) => auth_error_response(&state, req.headers(), err),
     }
+    next.run(req).await
 }
+
 async fn host_guard(
     State(state): State<AppState>,
     req: axum::extract::Request,
@@ -547,13 +595,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         err
     })?;
-    let auth = Authenticator::new(config.auth_config.clone()).map_err(|err| {
-        tracing::error!(
-            error = %sanitize_error_message(&err.to_string(), 512),
-            "invalid auth configuration"
-        );
-        format!("invalid auth configuration: {err}")
-    })?;
     let executable_path = std::env::current_exe().map_err(|err| {
         std::io::Error::other(format!(
             "failed to resolve executable path for startup admission: {err}"
@@ -728,15 +769,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("SPARK_MCP_ALLOWED_HOSTS must not be empty".into());
     }
     let allowed_hosts = config.allowed_hosts.iter().cloned().collect::<HashSet<_>>();
-    let default_host = if addr.is_ipv6() {
-        format!("[{}]:{}", addr.ip(), addr.port())
-    } else {
-        format!("{}:{}", addr.ip(), addr.port())
-    };
 
     let state = AppState {
         allowed_hosts,
-        default_host,
         session_manager,
         stateful_service,
         stateless_service,
@@ -746,44 +781,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         startup_admission_mode: config.startup_admission.mode,
         provenance: runtime_provenance,
         admission,
-        auth: Arc::new(auth),
-        auth_realm: config.auth_realm.clone(),
-        auth_resource_url: config.auth_resource_url.clone(),
-        auth_issuer: config.auth_issuer.clone(),
-        auth_scopes_supported: config.auth_scopes_supported.clone(),
-        auth_allowed_client_ids: config.auth_allowed_client_ids.iter().cloned().collect(),
     };
+
+    let auth = Authenticator::new(config.auth_config.clone()).map_err(|err| {
+        std::io::Error::other(format!(
+            "invalid auth config: {}",
+            sanitize_error_message(&err.to_string(), LOG_ERROR_MAX)
+        ))
+    })?;
+    let auth = Arc::new(auth);
+    let auth_layer = build_auth_surface_layer(&config, &addr, auth)
+        .await
+        .map_err(|err| {
+            std::io::Error::other(format!(
+                "invalid auth surface config: {}",
+                sanitize_error_message(&err, LOG_ERROR_MAX)
+            ))
+        })?;
 
     let router = Router::new()
         .route("/health", get(health))
         .route("/attest", get(attest))
-        .route("/.well-known/oauth-protected-resource", get(prm_metadata))
-        .route(
-            "/.well-known/oauth-protected-resource/mcp",
-            get(prm_metadata),
-        )
-        .route(
-            "/mcp/.well-known/oauth-protected-resource",
-            get(prm_metadata),
-        )
-        .route(
-            "/mcp/.well-known/oauth-protected-resource/mcp",
-            get(prm_metadata),
-        )
-        .route(
-            "/.well-known/oauth-authorization-server",
-            get(oauth_authorization_metadata),
-        )
-        .route(
-            "/mcp/.well-known/oauth-authorization-server",
-            get(oauth_authorization_metadata),
-        )
-        .route("/.well-known/openid-configuration", get(oidc_metadata))
-        .route("/mcp/.well-known/openid-configuration", get(oidc_metadata))
         .route("/mcp", any(handle_mcp))
-        .layer(middleware::from_fn_with_state(state.clone(), auth_guard))
+        .route("/mcp/", any(handle_mcp))
         .layer(middleware::from_fn_with_state(state.clone(), host_guard))
-        .with_state(state);
+        .layer(middleware::from_fn(trim_trailing_slash))
+        .with_state(state)
+        .layer(auth_layer);
 
     tracing::info!(
         bind_addr = %sanitize_log_value(&config.bind_addr),

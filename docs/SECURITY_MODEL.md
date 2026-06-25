@@ -38,6 +38,11 @@ These endpoints are public by design:
 - `/.well-known/oauth-authorization-server`
 - `/.well-known/openid-configuration`
 
+OAuth discovery is served by the shared toolkit auth surface. When
+`SPARK_MCP_AUTH_ISSUER` is configured, the server preserves authorization
+server metadata discovered from the issuer, including device authorization
+metadata used by headless clients.
+
 `/health` includes index freshness, session metadata, runtime provenance, and
 startup admission state. `/attest` returns a v2 attestation envelope with
 runtime identity and binary metadata.

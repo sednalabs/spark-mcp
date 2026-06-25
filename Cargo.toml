@@ -12,7 +12,8 @@ build = "build.rs"
 axum = "0.8.8"
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 futures = "0.3.31"
-rmcp = { version = "=1.5.0", features = ["server", "transport-streamable-http-server", "macros"] }
+rmcp = { version = "=1.7.0", features = ["server", "transport-streamable-http-server", "macros"] }
+rmcp-macros = "=1.7.0"
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "signal"] }
 tokio-util = "0.7.18"
 tracing = "0.1.44"
@@ -30,11 +31,11 @@ fastembed = { version = "5", default-features = false, features = ["ort-load-dyn
 hnsw_rs = "0.3.3"
 url = "2.5.4"
 
-mcp-toolkit-docs = { git = "https://github.com/sednalabs/mcp-toolkit-rs", rev = "1cf322071d84e27fe3002ee53198353af0ea6513", package = "mcp-toolkit-docs" }
-mcp-toolkit-auth = { git = "https://github.com/sednalabs/mcp-toolkit-rs", rev = "1cf322071d84e27fe3002ee53198353af0ea6513", package = "mcp-toolkit-auth" }
-mcp-toolkit-core = { git = "https://github.com/sednalabs/mcp-toolkit-rs", rev = "1cf322071d84e27fe3002ee53198353af0ea6513", package = "mcp-toolkit-core" }
-mcp-toolkit-http = { git = "https://github.com/sednalabs/mcp-toolkit-rs", rev = "1cf322071d84e27fe3002ee53198353af0ea6513", package = "mcp-toolkit-http", features = ["session", "session-sqlite"] }
-mcp-toolkit-observability = { git = "https://github.com/sednalabs/mcp-toolkit-rs", rev = "1cf322071d84e27fe3002ee53198353af0ea6513", package = "mcp-toolkit-observability" }
+mcp-toolkit-docs = { version = "0.1.0", git = "https://github.com/sednalabs/mcp-toolkit-rs", rev = "63558b9716bf1acf2bf1c85cd4c07445d0782e89", package = "mcp-toolkit-docs" }
+mcp-toolkit-auth = { version = "0.1.0", git = "https://github.com/sednalabs/mcp-toolkit-rs", rev = "63558b9716bf1acf2bf1c85cd4c07445d0782e89", package = "mcp-toolkit-auth" }
+mcp-toolkit-core = { version = "0.1.0", git = "https://github.com/sednalabs/mcp-toolkit-rs", rev = "63558b9716bf1acf2bf1c85cd4c07445d0782e89", package = "mcp-toolkit-core" }
+mcp-toolkit-http = { version = "0.1.0", git = "https://github.com/sednalabs/mcp-toolkit-rs", rev = "63558b9716bf1acf2bf1c85cd4c07445d0782e89", package = "mcp-toolkit-http", features = ["session", "session-sqlite"] }
+mcp-toolkit-observability = { version = "0.1.0", git = "https://github.com/sednalabs/mcp-toolkit-rs", rev = "63558b9716bf1acf2bf1c85cd4c07445d0782e89", package = "mcp-toolkit-observability" }
 
 [dev-dependencies]
-mcp-toolkit-testing = { git = "https://github.com/sednalabs/mcp-toolkit-rs", rev = "1cf322071d84e27fe3002ee53198353af0ea6513", package = "mcp-toolkit-testing" }
+mcp-toolkit-testing = { version = "0.1.0", git = "https://github.com/sednalabs/mcp-toolkit-rs", rev = "63558b9716bf1acf2bf1c85cd4c07445d0782e89", package = "mcp-toolkit-testing" }

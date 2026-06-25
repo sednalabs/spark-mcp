@@ -111,10 +111,8 @@ run_workspace_checks() {
   (
     cd "${workspace_path}"
     run_cmd cargo audit --deny warnings \
-      --ignore RUSTSEC-2024-0384 \
       --ignore RUSTSEC-2024-0436 \
-      --ignore RUSTSEC-2025-0141 \
-      --ignore RUSTSEC-2026-0002
+      --ignore RUSTSEC-2025-0141
   )
 
   echo "[workspace: ${workspace_dir}] [3/3] cargo outdated (direct dependency stale-risk)"

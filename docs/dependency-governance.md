@@ -85,7 +85,5 @@ Current release exceptions:
 
 | Advisory | Source | Rationale | Expiry |
 | --- | --- | --- | --- |
-| `RUSTSEC-2024-0384` | `instant` via `tantivy` | Transitive indexing dependency; revisit with the next Tantivy upgrade. | 2026-07-31 |
 | `RUSTSEC-2024-0436` | `paste` via `tokenizers`/`fastembed` | Transitive optional semantic-search dependency; revisit when the embedding stack removes it. | 2026-07-31 |
 | `RUSTSEC-2025-0141` | `bincode` via `hnsw_rs` and semantic index serialization | Unmaintained advisory with no direct vulnerability; revisit before publishing semantic index artifacts or changing serialization format. | 2026-07-31 |
-| `RUSTSEC-2026-0002` | `lru` via `tantivy` | Transitive indexing dependency; Spark does not use `lru::IterMut` directly. Revisit with the next Tantivy upgrade. | 2026-07-31 |

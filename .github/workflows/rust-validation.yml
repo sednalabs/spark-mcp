@@ -3,8 +3,25 @@ name: Rust Validation
 on:
   push:
     branches: [main]
+    paths:
+      - ".github/workflows/rust-validation.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "build.rs"
+      - "src/**"
+      - "spec/**"
+      - "scripts/**"
   pull_request:
     branches: [main]
+    paths:
+      - ".github/workflows/rust-validation.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "build.rs"
+      - "src/**"
+      - "spec/**"
+      - "scripts/**"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -18,6 +35,10 @@ jobs:
     name: Test And Tool Contract
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      SPARK_MCP_SEMANTIC_ENABLED: "0"
+      SPARK_MCP_SEMANTIC_MODEL: all-minilm-l6-v2
 
     steps:
       - name: Checkout
@@ -32,14 +53,54 @@ jobs:
         # swatinem/rust-cache v2
         uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
 
+      - name: Cache model assets
+        # actions/cache v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/fastembed
+            .fastembed_cache
+          key: spark-mcp-model-assets-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            spark-mcp-model-assets-${{ runner.os }}-
+
       - name: Format check
         run: cargo fmt --check
 
       - name: Unit and integration tests
-        run: cargo test
+        run: cargo test --locked
 
       - name: Print tool inventory
         run: |
           set -euo pipefail
-          cargo run --bin spark-mcp -- --print-tools > /tmp/tools.json
+          cargo run --locked --bin spark-mcp -- --print-tools > /tmp/tools.json
           test -s /tmp/tools.json
+
+      - name: Build release binary
+        run: cargo build --locked --release --bin spark-mcp
+
+      - name: Package release binary
+        run: |
+          set -euo pipefail
+          release_dir=".tmp/hosted-release/spark-mcp-linux-x86_64"
+          rm -rf ".tmp/hosted-release"
+          mkdir -p "${release_dir}"
+          cp target/release/spark-mcp "${release_dir}/spark-mcp"
+          {
+            echo "name=spark-mcp"
+            echo "target=x86_64-unknown-linux-gnu"
+            echo "source_sha=${GITHUB_SHA}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "${release_dir}/manifest.txt"
+          tar -C ".tmp/hosted-release" -czf ".tmp/hosted-release/spark-mcp-linux-x86_64.tar.gz" "spark-mcp-linux-x86_64"
+
+      - name: Upload release binary artifact
+        # actions/upload-artifact v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: spark-mcp-linux-x86_64-${{ github.run_id }}
+          path: .tmp/hosted-release/spark-mcp-linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
