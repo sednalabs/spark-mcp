@@ -350,7 +350,7 @@ version = "3.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
 dependencies = [
- "darling 0.23.0",
+ "darling 0.20.11",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -444,10 +444,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
 dependencies = [
  "iana-time-zone",
- "js-sys",
  "num-traits",
  "serde",
- "wasm-bindgen",
  "windows-link",
 ]
 
@@ -2054,7 +2052,7 @@ dependencies = [
 [[package]]
 name = "mcp-toolkit-auth"
 version = "0.1.0"
-source = "git+https://github.com/sednalabs/mcp-toolkit-rs?rev=1cf322071d84e27fe3002ee53198353af0ea6513#1cf322071d84e27fe3002ee53198353af0ea6513"
+source = "git+https://github.com/sednalabs/mcp-toolkit-rs?rev=63558b9716bf1acf2bf1c85cd4c07445d0782e89#63558b9716bf1acf2bf1c85cd4c07445d0782e89"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -2078,7 +2076,7 @@ dependencies = [
 [[package]]
 name = "mcp-toolkit-core"
 version = "0.1.0"
-source = "git+https://github.com/sednalabs/mcp-toolkit-rs?rev=1cf322071d84e27fe3002ee53198353af0ea6513#1cf322071d84e27fe3002ee53198353af0ea6513"
+source = "git+https://github.com/sednalabs/mcp-toolkit-rs?rev=63558b9716bf1acf2bf1c85cd4c07445d0782e89#63558b9716bf1acf2bf1c85cd4c07445d0782e89"
 dependencies = [
  "rmcp",
  "serde",
@@ -2088,7 +2086,7 @@ dependencies = [
 [[package]]
 name = "mcp-toolkit-docs"
 version = "0.1.0"
-source = "git+https://github.com/sednalabs/mcp-toolkit-rs?rev=1cf322071d84e27fe3002ee53198353af0ea6513#1cf322071d84e27fe3002ee53198353af0ea6513"
+source = "git+https://github.com/sednalabs/mcp-toolkit-rs?rev=63558b9716bf1acf2bf1c85cd4c07445d0782e89#63558b9716bf1acf2bf1c85cd4c07445d0782e89"
 dependencies = [
  "serde",
 ]
@@ -2096,13 +2094,14 @@ dependencies = [
 [[package]]
 name = "mcp-toolkit-http"
 version = "0.1.0"
-source = "git+https://github.com/sednalabs/mcp-toolkit-rs?rev=1cf322071d84e27fe3002ee53198353af0ea6513#1cf322071d84e27fe3002ee53198353af0ea6513"
+source = "git+https://github.com/sednalabs/mcp-toolkit-rs?rev=63558b9716bf1acf2bf1c85cd4c07445d0782e89#63558b9716bf1acf2bf1c85cd4c07445d0782e89"
 dependencies = [
  "aes-gcm",
  "axum",
  "base64 0.22.1",
  "futures",
  "http",
+ "http-body-util",
  "rand_core 0.6.4",
  "rmcp",
  "rusqlite",
@@ -2116,7 +2115,7 @@ dependencies = [
 [[package]]
 name = "mcp-toolkit-observability"
 version = "0.1.0"
-source = "git+https://github.com/sednalabs/mcp-toolkit-rs?rev=1cf322071d84e27fe3002ee53198353af0ea6513#1cf322071d84e27fe3002ee53198353af0ea6513"
+source = "git+https://github.com/sednalabs/mcp-toolkit-rs?rev=63558b9716bf1acf2bf1c85cd4c07445d0782e89#63558b9716bf1acf2bf1c85cd4c07445d0782e89"
 dependencies = [
  "once_cell",
  "regex",
@@ -2129,8 +2128,9 @@ dependencies = [
 [[package]]
 name = "mcp-toolkit-testing"
 version = "0.1.0"
-source = "git+https://github.com/sednalabs/mcp-toolkit-rs?rev=1cf322071d84e27fe3002ee53198353af0ea6513#1cf322071d84e27fe3002ee53198353af0ea6513"
+source = "git+https://github.com/sednalabs/mcp-toolkit-rs?rev=63558b9716bf1acf2bf1c85cd4c07445d0782e89#63558b9716bf1acf2bf1c85cd4c07445d0782e89"
 dependencies = [
+ "http",
  "mcp-toolkit-core",
  "mcp-toolkit-http",
  "serde",
@@ -2154,9 +2154,9 @@ checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
 
 [[package]]
 name = "memmap2"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
 dependencies = [
  "libc",
 ]
@@ -2701,9 +2701,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.14"
+version = "0.11.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "434b42fec591c96ef50e21e886936e66d3cc3f737104fdb9b737c40ffb94c098"
+checksum = "4fcb935c5bec503c2f0e306bdd3e58bb9029dcb14fa8d9ac76e3a5256ac0763e"
 dependencies = [
  "aws-lc-rs",
  "bytes",
@@ -3026,9 +3026,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "1.5.0"
+version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67d69668de0b0ccd9cc435f700f3b39a7861863cf37a15e1f304ea78688a4826"
+checksum = "0810a9f717d9828f475fe1f629f4c305c8464b7f496c3a854b58d29e65f4058e"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3522,6 +3522,7 @@ dependencies = [
  "mcp-toolkit-observability",
  "mcp-toolkit-testing",
  "rmcp",
+ "rmcp-macros",
  "schemars",
  "serde",
  "serde_json",

@@ -72,6 +72,15 @@ deployments should use JWKS or introspection with an external authorization
 server and should keep the default loopback binding unless a trusted reverse
 proxy is enforcing network policy.
 
+Codex device login is provided through the shared `mcp-toolkit-rs` OAuth
+metadata surface. After a JWKS/introspection deployment exposes
+`/.well-known/oauth-authorization-server/mcp`, authenticate the local Codex MCP
+entry with:
+
+```bash
+codex mcp login spark_mcp --device-auth
+```
+
 ## Operational contract
 
 `/health` is public and returns index freshness, session stats, runtime
@@ -80,3 +89,8 @@ attestation envelope with runtime identity and binary metadata.
 
 Tool schemas are snapshot-tested at
 `spec/tool_schema_snapshot.v1.json`.
+
+GitHub-hosted Rust Validation publishes a short-lived
+`spark-mcp-linux-x86_64-<run_id>` artifact containing a release binary and
+manifest. Local services should consume that hosted artifact rather than
+building on operator machines.
