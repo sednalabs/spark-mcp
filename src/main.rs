@@ -135,7 +135,9 @@ fn admission_outcome_label(outcome: AdmissionOutcome) -> &'static str {
 }
 
 fn public_base_url_from_bind_addr(bind_addr: &SocketAddr) -> String {
-    format!("http://{bind_addr}")
+    // Local bind-address fallback; deployments should set SPARK_MCP_AUTH_RESOURCE_URL.
+    let scheme = "http";
+    format!("{scheme}://{bind_addr}")
 }
 
 fn public_base_url_from_resource_url(resource_url: &str) -> Result<Option<String>, String> {
@@ -803,7 +805,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/health", get(health))
         .route("/attest", get(attest))
         .route("/mcp", any(handle_mcp))
-        .route("/mcp/", any(handle_mcp))
         .layer(middleware::from_fn_with_state(state.clone(), host_guard))
         .layer(middleware::from_fn(trim_trailing_slash))
         .with_state(state)
